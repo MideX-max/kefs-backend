@@ -1,0 +1,26 @@
+{
+  "name": "keffi-guest-management-server",
+  "version": "1.0.0",
+  "description": "Backend API for KEFFI APARTMENT SUITES Guest Management System",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "reset": "node reset-db.js",
+    "reset:full": "node complete-reset.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.10.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^9.9.4",
+    "multer": "^2.0.2"
+  }
+}
