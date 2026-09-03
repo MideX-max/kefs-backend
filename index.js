@@ -83,6 +83,22 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Root route for Vercel health check
+app.get('/', (req, res) => {
+  res.json({
+    message: 'KEFFI APARTMENT SUITES Backend API',
+    status: 'online',
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth/*',
+      reservations: '/api/reservations/*',
+      flats: '/api/flats/*',
+      stats: '/api/stats',
+      upload: '/api/upload'
+    }
+  });
+});
+
 // Serve frontend build if dist exists
 const distPath = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(distPath));
