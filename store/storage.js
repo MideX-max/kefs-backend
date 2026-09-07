@@ -167,6 +167,7 @@ export function redactReservationForPublic(reservation) {
     status: reservation.status,
     managerSignatureUrl: reservation.managerSignatureUrl,
     signatureUrl: reservation.status === 'Pending Review' ? '' : reservation.signatureUrl,
+    verificationNotes: reservation.verificationNotes || '',
     createdAt: reservation.createdAt
   };
 }
@@ -448,7 +449,7 @@ class StorageEngine {
   }
 
   async checkFlatConflict(flatName, checkInDate, checkOutDate, excludeReservationId = null) {
-    if (!flatName || !checkInDate || !checkOutDate) return null;
+    if (!flatName || !checkInDate || !checkOutDate || cleanString(flatName).toLowerCase() === 'airbnb booking') return null;
     validateDateRange(checkInDate, checkOutDate);
 
     const from = toDateOnly(checkInDate);
@@ -561,13 +562,13 @@ class StorageEngine {
     // For Airbnb, the Airbnb document serves as identity verification
     const hasIdentity = isAirbnb 
       ? Boolean(cleanString(payload.airbnbScreenshotUrl))
-      : Boolean(cleanString(media.idDocumentUrl) || cleanString(payload.idNumber));
+      : Boolean(cleanString(media.idDocumentUrl));
     
     const hasSignature = Boolean(cleanString(media.signatureUrl));
     const autoApproved = isAirbnb ? hasIdentity : (hasIdentity && hasSignature);
     const verificationNotes = autoApproved
       ? (isAirbnb ? 'Airbnb booking verified and automatically approved.' : 'Automated validation passed all checks.')
-      : 'Flagged: identity document/number and guest signature are required before approval.';
+      : 'Flagged: identity document and guest signature are required before approval.';
 
     const created = await Reservation.create({
       _id: generateRecordId('res'),
@@ -672,6 +673,46 @@ class StorageEngine {
 
     // Only bin the superseded files once the new state is safely persisted.
     if (doc) await destroyAssets(orphaned);
+
+    return this.withDynamicStatus(reservationFromDoc(doc));
+  }
+
+  async extendStay(id, newCheckOutDate) {
+    const existing = await this.getReservationByIdOrPassId(id);
+    if (!existing) return null;
+
+    const targetCheckOut = toDateOnly(newCheckOutDate);
+    validateDateRange(existing.checkInDate, targetCheckOut);
+
+    if (targetCheckOut <= existing.checkOutDate) {
+      const err = new Error(`New check-out date must be after current check-out date (${existing.checkOutDate}).`);
+      err.status = 400;
+      throw err;
+    }
+
+    // Check for conflicts for the extended period
+    const conflict = await this.checkFlatConflict(
+      existing.flat, 
+      existing.checkInDate, 
+      targetCheckOut, 
+      existing.id
+    );
+    if (conflict) {
+      const err = new Error(`Flat "${existing.flat}" is already booked during the extended dates.`);
+      err.status = 409;
+      throw err;
+    }
+
+    const doc = await Reservation.findOneAndUpdate(
+      { _id: existing.id },
+      { 
+        $set: { 
+          checkOutDate: targetCheckOut,
+          verificationNotes: `Stay extended on ${new Date().toISOString().slice(0, 10)}. New check-out: ${targetCheckOut}`
+        } 
+      },
+      { new: true, runValidators: true }
+    ).lean();
 
     return this.withDynamicStatus(reservationFromDoc(doc));
   }

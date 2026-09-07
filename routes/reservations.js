@@ -12,6 +12,12 @@ const submissionLimiter = createRateLimiter({
   message: 'Too many reservation requests. Please wait and try again.'
 });
 
+const extendStayLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 15,
+  message: 'Too many stay extension requests. Please wait and try again.'
+});
+
 router.get('/', authenticateToken, asyncHandler(async (req, res) => {
   const { status, flat, search } = req.query;
   const reservations = await storage.getReservations({ status, flat, search });
@@ -105,6 +111,31 @@ router.patch('/:id/status', authenticateToken, asyncHandler(async (req, res) => 
   }
 
   return res.json({ message: `Reservation status updated to ${status}.`, reservation: updated });
+}));
+
+// Extend stay endpoint (for guests to extend their check-out date)
+router.patch('/:id/extend-stay', extendStayLimiter, asyncHandler(async (req, res) => {
+  const { newCheckOutDate } = req.body;
+  const reservationId = req.params.id;
+
+  if (!newCheckOutDate) {
+    return res.status(400).json({ message: 'New check-out date is required.' });
+  }
+
+  try {
+    const updated = await storage.extendStay(reservationId, newCheckOutDate);
+    if (!updated) {
+      return res.status(404).json({ message: 'Reservation not found.' });
+    }
+
+    return res.json({ 
+      message: 'Stay extended successfully.', 
+      reservation: redactReservationForPublic(updated) 
+    });
+  } catch (error) {
+    const statusCode = error.status || (error.message.includes('booked') ? 409 : 400);
+    return res.status(statusCode).json({ message: error.message || 'Failed to extend stay.' });
+  }
 }));
 
 router.patch('/:id', authenticateToken, asyncHandler(async (req, res) => {

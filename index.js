@@ -174,12 +174,11 @@ async function startServer() {
     return;
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '::', () => {
     console.log('===================================================');
     console.log('  KEFFI APARTMENT SUITES BACKEND API RUNNING');
-    console.log(`  Port: http://localhost:${PORT}`);
+    console.log(`  Port: http://localhost:${PORT} / http://127.0.0.1:${PORT}`);
     console.log(`  API Health: http://localhost:${PORT}/api/health`);
-    console.log('  Accessible from network: http://0.0.0.0:' + PORT);
     console.log('===================================================');
   });
 }
