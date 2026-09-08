@@ -65,12 +65,21 @@ app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 app.use('/api/auth', authRoutes);
-app.use('/api/reservations', reservationRoutes);
-app.use('/api/flats', flatRoutes);
-app.use('/api/stats', statsRoutes);
-app.use('/api/upload', uploadRoutes);
+app.use('/auth', authRoutes);
 
-app.get('/api/health', (req, res) => {
+app.use('/api/reservations', reservationRoutes);
+app.use('/reservations', reservationRoutes);
+
+app.use('/api/flats', flatRoutes);
+app.use('/flats', flatRoutes);
+
+app.use('/api/stats', statsRoutes);
+app.use('/stats', statsRoutes);
+
+app.use('/api/upload', uploadRoutes);
+app.use('/upload', uploadRoutes);
+
+const sendHealth = (req, res) => {
   res.json({
     status: 'online',
     app: 'KEFFI APARTMENT SUITES Guest Management System API',
@@ -78,7 +87,10 @@ app.get('/api/health', (req, res) => {
     fileStorage: isCloudinaryConfigured ? 'cloudinary' : 'unconfigured',
     timestamp: new Date().toISOString()
   });
-});
+};
+
+app.get('/api/health', sendHealth);
+app.get('/health', sendHealth);
 
 // Root route for Vercel health check
 app.get('/', (req, res) => {
@@ -100,9 +112,19 @@ app.get('/', (req, res) => {
 const distPath = path.join(__dirname, '..', 'frontend', 'dist');
 app.use(express.static(distPath));
 
-// Catch-all for SPA client routing (prevent 404 on refresh)
+// Catch-all for SPA client routing (prevent 404 on refresh when served together)
 app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+  const isApiRequest = 
+    req.path.startsWith('/api') ||
+    req.path.startsWith('/auth') ||
+    req.path.startsWith('/reservations') ||
+    req.path.startsWith('/flats') ||
+    req.path.startsWith('/stats') ||
+    req.path.startsWith('/upload') ||
+    req.path.startsWith('/uploads') ||
+    req.path.startsWith('/health');
+
+  if (isApiRequest) {
     return next();
   }
 
