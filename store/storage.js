@@ -616,7 +616,7 @@ class StorageEngine {
     const doc = await Reservation.findOneAndUpdate(
       { $or: [{ _id: id }, { passId: id }] },
       { $set: update },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     ).lean();
 
     return this.withDynamicStatus(reservationFromDoc(doc));
@@ -668,7 +668,7 @@ class StorageEngine {
     const doc = await Reservation.findOneAndUpdate(
       { $or: [{ _id: id }, { passId: id }] },
       { $set: next },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     ).lean();
 
     // Only bin the superseded files once the new state is safely persisted.
@@ -711,7 +711,7 @@ class StorageEngine {
           verificationNotes: `Stay extended on ${new Date().toISOString().slice(0, 10)}. New check-out: ${targetCheckOut}`
         } 
       },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     ).lean();
 
     return this.withDynamicStatus(reservationFromDoc(doc));
@@ -794,7 +794,7 @@ class StorageEngine {
     const doc = await Flat.findOneAndUpdate(
       { _id: existing._id },
       { $set: next },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     ).lean();
 
     // Stands in for ON UPDATE CASCADE on the reservations.flat foreign key.
@@ -871,7 +871,7 @@ class StorageEngine {
     const doc = await Admin.findOneAndUpdate(
       { _id: current.id },
       { $set: next },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     ).lean();
 
     if (doc && signature.orphaned) await destroyAssets([signature.orphaned]);

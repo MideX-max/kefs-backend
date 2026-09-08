@@ -51,17 +51,14 @@ app.use((req, res, next) => {
 
 app.use(cors({
   origin(origin, callback) {
-    // Allow all origins for development
-    if (process.env.NODE_ENV === 'development') {
-      return callback(null, true);
-    }
-    // Otherwise check against specific origins
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Allow all origins in development, if origin is empty (server-to-server/Postman), or if wildcard * is configured
+    if (process.env.NODE_ENV === 'development' || !origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
     return callback(new Error('Origin not allowed by CORS.'));
-  }
+  },
+  credentials: true
 }));
 
 app.use(express.json({ limit: '5mb' }));
@@ -174,7 +171,7 @@ async function startServer() {
     return;
   }
 
-  app.listen(PORT, '::', () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log('===================================================');
     console.log('  KEFFI APARTMENT SUITES BACKEND API RUNNING');
     console.log(`  Port: http://localhost:${PORT} / http://127.0.0.1:${PORT}`);
