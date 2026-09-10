@@ -113,7 +113,7 @@ router.patch('/:id/status', authenticateToken, asyncHandler(async (req, res) => 
   return res.json({ message: `Reservation status updated to ${status}.`, reservation: updated });
 }));
 
-// Extend stay endpoint (for guests to extend their check-out date)
+// Extend stay endpoint (for guests to request extension of their check-out date)
 router.patch('/:id/extend-stay', extendStayLimiter, asyncHandler(async (req, res) => {
   const { newCheckOutDate } = req.body;
   const reservationId = req.params.id;
@@ -129,12 +129,38 @@ router.patch('/:id/extend-stay', extendStayLimiter, asyncHandler(async (req, res
     }
 
     return res.json({ 
-      message: 'Stay extended successfully.', 
+      message: 'Extension request submitted. Awaiting Facility Manager verification.', 
       reservation: redactReservationForPublic(updated) 
     });
   } catch (error) {
     const statusCode = error.status || (error.message.includes('booked') ? 409 : 400);
     return res.status(statusCode).json({ message: error.message || 'Failed to extend stay.' });
+  }
+}));
+
+// Review stay extension endpoint (for facility managers to approve/reject stay extension)
+router.post('/:id/review-extension', authenticateToken, asyncHandler(async (req, res) => {
+  const { action, notes } = req.body;
+  const reservationId = req.params.id;
+
+  if (!action || !['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ message: 'Action must be "approve" or "reject".' });
+  }
+
+  try {
+    const reviewerName = req.user?.name || req.user?.email || 'Facility Manager';
+    const updated = await storage.reviewStayExtension(reservationId, action, reviewerName, notes);
+    if (!updated) {
+      return res.status(404).json({ message: 'Reservation not found.' });
+    }
+
+    return res.json({
+      message: `Stay extension ${action}d successfully.`,
+      reservation: updated
+    });
+  } catch (error) {
+    const statusCode = error.status || 400;
+    return res.status(statusCode).json({ message: error.message || `Failed to ${action} stay extension.` });
   }
 }));
 

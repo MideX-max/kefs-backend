@@ -44,7 +44,16 @@ const reservationSchema = new mongoose.Schema(
     status: { type: String, required: true },
     autoApproved: { type: Boolean, required: true, default: false },
     verificationNotes: { type: String, default: '' },
-    submittedBy: { type: String, default: 'Guest / Representative' }
+    submittedBy: { type: String, default: 'Guest / Representative' },
+    // Extension request verification by Facility Manager
+    extensionRequest: {
+      requestedCheckOutDate: { type: String, default: '' },
+      requestedAt: { type: String, default: '' },
+      status: { type: String, default: 'none' }, // 'none' | 'pending' | 'approved' | 'rejected'
+      managerNotes: { type: String, default: '' },
+      reviewedBy: { type: String, default: '' },
+      reviewedAt: { type: String, default: '' }
+    }
   },
   { collection: 'reservations', timestamps: true, versionKey: false }
 );

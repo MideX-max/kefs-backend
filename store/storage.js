@@ -134,7 +134,15 @@ function reservationFromDoc(doc) {
     autoApproved: doc.autoApproved,
     verificationNotes: doc.verificationNotes || '',
     createdAt: toIsoString(doc.createdAt),
-    submittedBy: doc.submittedBy || 'Guest / Representative'
+    submittedBy: doc.submittedBy || 'Guest / Representative',
+    extensionRequest: doc.extensionRequest || {
+      requestedCheckOutDate: '',
+      requestedAt: '',
+      status: 'none',
+      managerNotes: '',
+      reviewedBy: '',
+      reviewedAt: ''
+    }
   };
 }
 
@@ -166,9 +174,10 @@ export function redactReservationForPublic(reservation) {
     checkOutTime: reservation.checkOutTime,
     status: reservation.status,
     managerSignatureUrl: reservation.managerSignatureUrl,
-    signatureUrl: reservation.status === 'Pending Review' ? '' : reservation.signatureUrl,
+    signatureUrl: (reservation.status === 'Pending Review' && reservation.extensionRequest?.status !== 'pending') ? '' : reservation.signatureUrl,
     verificationNotes: reservation.verificationNotes || '',
-    createdAt: reservation.createdAt
+    createdAt: reservation.createdAt,
+    extensionRequest: reservation.extensionRequest || null
   };
 }
 
@@ -342,6 +351,7 @@ class StorageEngine {
   }
 
   computeStatus(reservation) {
+    if (reservation?.extensionRequest?.status === 'pending') return 'Pending Review';
     if (isTerminalStatus(reservation.status)) return reservation.status;
 
     const now = new Date();
@@ -442,10 +452,19 @@ class StorageEngine {
 
   // Replaces the flat -> flats(name) foreign key that PostgreSQL enforced.
   async assertFlatExists(flatName) {
-    const exists = await Flat.exists({ name: flatName });
-    if (!exists) {
-      throw new Error(`Flat "${flatName}" does not exist.`);
+    if (!flatName) {
+      throw new Error('Flat name is required.');
     }
+    const cleanName = cleanString(flatName);
+    const flat = await Flat.findOne({ name: cleanName }).collation(CASE_INSENSITIVE).lean();
+    if (flat) return flat.name;
+
+    // Support flexible spacing/hyphens e.g. "Azalea D-6", "azalea d 6", "Azalea D6"
+    const normalized = cleanName.replace(/[-\s]+/g, '\\s*');
+    const fuzzyFlat = await Flat.findOne({ name: { $regex: new RegExp(`^${normalized}$`, 'i') } }).lean();
+    if (fuzzyFlat) return fuzzyFlat.name;
+
+    throw new Error(`Flat "${flatName}" does not exist.`);
   }
 
   async checkFlatConflict(flatName, checkInDate, checkOutDate, excludeReservationId = null) {
@@ -536,13 +555,21 @@ class StorageEngine {
 
     validateDateRange(checkInDate, checkOutDate);
 
-    // Only check flat conflict and assert flat exists for non-Airbnb bookings
-    if (!isAirbnb) {
-      const conflict = await this.checkFlatConflict(flat, checkInDate, checkOutDate);
-      if (conflict) {
-        throw new Error(`Flat "${flat}" is already booked for those dates.`);
+    let targetFlat = flat || (isAirbnb ? 'Airbnb Booking' : '');
+    if (targetFlat && targetFlat.toLowerCase() !== 'airbnb booking') {
+      try {
+        targetFlat = await this.assertFlatExists(targetFlat);
+      } catch (err) {
+        if (!isAirbnb) throw err;
       }
-      await this.assertFlatExists(flat);
+    }
+
+    // Check flat conflict for non-Airbnb or resolved flat
+    if (targetFlat && targetFlat.toLowerCase() !== 'airbnb booking') {
+      const conflict = await this.checkFlatConflict(targetFlat, checkInDate, checkOutDate);
+      if (conflict) {
+        throw new Error(`Flat "${targetFlat}" is already booked for those dates.`);
+      }
     }
 
     const admin = await this.getAdmin();
@@ -555,8 +582,7 @@ class StorageEngine {
       payload.idDocumentName = payload.airbnbScreenshotName;
     }
 
-    // Push any inline data: URIs (drawn signatures) up to Cloudinary first, so
-    // what lands in the database is always a hosted URL plus its public id.
+    // Push any inline data: URIs (drawn signatures or extracted signature crops) up to Cloudinary first
     const { fields: media } = await this.resolveReservationMedia(payload, null);
 
     // For Airbnb, the Airbnb document serves as identity verification
@@ -578,7 +604,7 @@ class StorageEngine {
       phone: phone || '', // Allow empty phone for Airbnb
       guestCount: Math.max(1, Number.parseInt(payload.guestCount, 10) || 1),
       purpose: cleanString(payload.purpose, isAirbnb ? 'Airbnb Stay' : 'Apartment Stay'),
-      flat,
+      flat: targetFlat,
       checkInDate,
       checkOutDate,
       checkInTime: toTimeOnly(payload.checkInTime, '14:00'),
@@ -593,7 +619,15 @@ class StorageEngine {
       status: autoApproved ? 'Approved' : 'Pending Review',
       autoApproved,
       verificationNotes,
-      submittedBy: cleanString(payload.submittedBy, 'Guest / Representative')
+      submittedBy: cleanString(payload.submittedBy, 'Guest / Representative'),
+      extensionRequest: {
+        requestedCheckOutDate: '',
+        requestedAt: '',
+        status: 'none',
+        managerNotes: '',
+        reviewedBy: '',
+        reviewedAt: ''
+      }
     });
 
     return this.withDynamicStatus(reservationFromDoc(created.toObject()));
@@ -691,30 +725,114 @@ class StorageEngine {
     }
 
     // Check for conflicts for the extended period
-    const conflict = await this.checkFlatConflict(
-      existing.flat, 
-      existing.checkInDate, 
-      targetCheckOut, 
-      existing.id
-    );
-    if (conflict) {
-      const err = new Error(`Flat "${existing.flat}" is already booked during the extended dates.`);
-      err.status = 409;
-      throw err;
+    if (existing.flat && existing.flat.toLowerCase() !== 'airbnb booking') {
+      const conflict = await this.checkFlatConflict(
+        existing.flat, 
+        existing.checkInDate, 
+        targetCheckOut, 
+        existing.id
+      );
+      if (conflict) {
+        const err = new Error(`Flat "${existing.flat}" is already booked during the extended dates.`);
+        err.status = 409;
+        throw err;
+      }
     }
 
     const doc = await Reservation.findOneAndUpdate(
-      { _id: existing.id },
+      { $or: [{ _id: existing.id }, { passId: existing.passId }] },
       { 
         $set: { 
-          checkOutDate: targetCheckOut,
-          verificationNotes: `Stay extended on ${new Date().toISOString().slice(0, 10)}. New check-out: ${targetCheckOut}`
+          status: 'Pending Review',
+          'extensionRequest.requestedCheckOutDate': targetCheckOut,
+          'extensionRequest.requestedAt': new Date().toISOString(),
+          'extensionRequest.status': 'pending',
+          'extensionRequest.managerNotes': '',
+          'extensionRequest.reviewedBy': '',
+          'extensionRequest.reviewedAt': '',
+          verificationNotes: `Extension requested to ${targetCheckOut}. Pending facility manager verification.`
         } 
       },
       { returnDocument: 'after', runValidators: true }
     ).lean();
 
     return this.withDynamicStatus(reservationFromDoc(doc));
+  }
+
+  async reviewStayExtension(id, action, managerId = 'Facility Manager', notes = '') {
+    const existing = await this.getReservationByIdOrPassId(id);
+    if (!existing) {
+      const err = new Error('Reservation not found.');
+      err.status = 404;
+      throw err;
+    }
+
+    if (!existing.extensionRequest || existing.extensionRequest.status !== 'pending') {
+      const err = new Error('No pending extension request found for this reservation.');
+      err.status = 400;
+      throw err;
+    }
+
+    const requestedDate = existing.extensionRequest.requestedCheckOutDate;
+    const admin = await this.getAdmin();
+    const nowIso = new Date().toISOString();
+
+    if (action === 'approve') {
+      // Re-verify conflict
+      if (existing.flat && existing.flat.toLowerCase() !== 'airbnb booking') {
+        const conflict = await this.checkFlatConflict(
+          existing.flat,
+          existing.checkInDate,
+          requestedDate,
+          existing.id
+        );
+        if (conflict) {
+          const err = new Error(`Cannot approve extension: Flat "${existing.flat}" is already booked during requested dates.`);
+          err.status = 409;
+          throw err;
+        }
+      }
+
+      const doc = await Reservation.findOneAndUpdate(
+        { $or: [{ _id: existing.id }, { passId: existing.passId }] },
+        {
+          $set: {
+            status: 'Approved',
+            checkOutDate: requestedDate,
+            'extensionRequest.status': 'approved',
+            'extensionRequest.reviewedBy': managerId,
+            'extensionRequest.reviewedAt': nowIso,
+            'extensionRequest.managerNotes': notes || 'Approved by Facility Manager',
+            managerSignatureUrl: admin?.defaultSignature || DEFAULT_MANAGER_SIGNATURE,
+            verificationNotes: `Stay extension to ${requestedDate} verified and approved by ${managerId}.`
+          }
+        },
+        { returnDocument: 'after', runValidators: true }
+      ).lean();
+
+      return this.withDynamicStatus(reservationFromDoc(doc));
+    } else if (action === 'reject') {
+      const doc = await Reservation.findOneAndUpdate(
+        { $or: [{ _id: existing.id }, { passId: existing.passId }] },
+        {
+          $set: {
+            status: 'Approved',
+            'extensionRequest.status': 'rejected',
+            'extensionRequest.reviewedBy': managerId,
+            'extensionRequest.reviewedAt': nowIso,
+            'extensionRequest.managerNotes': notes || 'Extension request rejected by Facility Manager',
+            verificationNotes: `Stay extension request rejected: ${notes || 'Rejected by Facility Manager.'}`
+          }
+        },
+        { returnDocument: 'after', runValidators: true }
+      ).lean();
+
+      return this.withDynamicStatus(reservationFromDoc(doc));
+    } else {
+      const err = new Error('Invalid action. Must be "approve" or "reject".');
+      err.status = 400;
+      throw err;
+    }
   }
 
   async getFlats() {
